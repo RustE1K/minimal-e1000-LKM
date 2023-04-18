@@ -1,39 +1,12 @@
 #include <linux/stddef.h>
 #include <linux/module.h>
-#include <linux/types.h>
-#include <asm/byteorder.h>
-#include <linux/mm.h>
-#include <linux/errno.h>
-#include <linux/ioport.h>
 #include <linux/pci.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
-#include <linux/delay.h>
-#include <linux/timer.h>
-#include <linux/slab.h>
-#include <linux/vmalloc.h>
-#include <linux/interrupt.h>
 #include <linux/string.h>
-#include <linux/pagemap.h>
-#include <linux/dma-mapping.h>
-#include <linux/bitops.h>
-#include <asm/io.h>
-#include <asm/irq.h>
-#include <linux/capability.h>
-#include <linux/in.h>
-#include <linux/ip.h>
-#include <linux/ipv6.h>
-#include <linux/tcp.h>
-#include <linux/udp.h>
-#include <net/pkt_sched.h>
-#include <linux/list.h>
-#include <linux/reboot.h>
-#include <net/checksum.h>
-#include <linux/mii.h>
 #include <linux/init.h>
-// TODO: remove excess imports
 
 MODULE_AUTHOR("Madison Lester");
 MODULE_DESCRIPTION("Minimal Intel(R) PRO/1000 Network Driver");
@@ -84,12 +57,6 @@ MODULE_LICENSE("GPL v2");
 #define E1000_ICR      (0x000C0/4)  /* Interrupt Cause Read - R/clr */
 #define E1000_EERD     (0x00014/4)  /* EEPROM Read - RW */
 
-// EEPROM
-#define E1000_EERD_ADDR 8 /* num of bit shifts to get to addr section */
-#define E1000_EERD_DATA 16 /* num of bit shifts to get to data section */
-#define E1000_EERD_DONE 0x00000010 /* 4th bit */
-#define E1000_EERD_READ 0x00000001 /* 0th bit */
-
 // Transmission control register bits (TCTL)
 #define E1000_TCTL_EN     0x00000002    /* enable tx */
 #define E1000_TCTL_PSP    0x00000008    /* pad short packets */
@@ -106,25 +73,6 @@ MODULE_LICENSE("GPL v2");
 #define E1000_TXD_RS	0x8 /* bit 3 in CMD section */
 #define E1000_TXD_DD	0x1 /* bit 0 in STATUS section */
 #define E1000_TXD_EOP	0x1 /* bit 0 of CMD section */
-
-// MAC address related constants
-#define E1000_RAH_AV	0x80000000
-#define E1000_NUM_MAC_WORDS 3
-
-// Receive control bits
-#define E1000_RCTL_EN           0x00000002 /* enable receiver */
-#define E1000_RCTL_LBM_NO       0xffffff3f /* no loopback mode, 6 & 7 bit set to 0 */
-#define E1000_RCTL_BSIZE_2048   0xfffcffff /* buffer size at 2048 by setting 16 and 17 bit to 0 */
-//#define E1000_RCTL_BSIZE_2048	0x00000000
-#define E1000_RCTL_SECRC        0x04000000 /* strip CRC by setting 26 bit to 1 */
-#define E1000_RCTL_LPE_NO       0xffffffdf /* disable long packet mode by sett If the E1000 receives a packet that is larger than the packet buffer in one receive descriptor, it will retrieve as many descriptors as necessary from the receive queue to store the entire contents of the packet. To indicate that this has happened, it will set the DD status bit on all of these descriptors, but only set the EOP status bit on the last of these descriptors. You can either deal with this possibility in your driver, or simply configure the card to not accept "long packets" (also known as jumbo frames) and make sure your receive buffers are large enough to store the largest possible standard Ethernet packet (1518 bytes). ing the 5th bit to 0 */
-
-// Receive descriptor status bits
-#define E1000_RXD_STATUS_DD		0x00000001
-#define E1000_RXD_STATUS_EOP	0x00000002
-
-// Receive Timer Interrupt mask
-#define E1000_RXT0	0x00000080 /* 7th bit */
 
 // Transmit descriptor struct. This is the type of each element in the
 // transmit queue.

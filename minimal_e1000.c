@@ -1,3 +1,8 @@
+/* Issues:
+* - e1000_init() unused -- move to e1000_probe?
+* - pci_alloc_consistent() DNE -- use dma_alloc_coherent()?
+*/
+
 #include <linux/stddef.h>
 #include <linux/module.h>
 #include <linux/pci.h>

@@ -45,7 +45,7 @@ MODULE_LICENSE("GPL v2");
 
 #define NTXDESC 64
 #define PKT_BUF_SIZE  1536  // minimum 1518, 16-byte aligned for performance
-#define TOTAL_TX_BUF_SIZE  (PKT_BUF_SIZE * NUM_TX_SIZE)
+#define TOTAL_TX_BUF_SIZE  (PKT_BUF_SIZE * NTXDESC)
 
 /* Register Set. (82543, 82544)
  *
@@ -150,34 +150,84 @@ struct e1000_private
     dma_addr_t tx_bufs_dma;
 };
 
+static int e1000_open(struct net_device *dev);
+static int e1000_stop(struct net_device *dev);
+static int e1000_start_xmit(struct sk_buff *skb, struct net_device *dev);
+static struct net_device_stats* e1000_get_stats(struct net_device *dev);
+
+static const struct net_device_ops e1000_netdev_ops = {
+	.ndo_open		= e1000_open,
+	.ndo_stop		= e1000_stop,
+	.ndo_start_xmit		= e1000_start_xmit,
+	.ndo_get_stats	= e1000_get_stats,
+};
+
+static const struct pci_device_id e1000_id_table[] = {
+    {PCI_DEVICE(E1000_VENDOR_ID, E1000_DEVICE_ID)},
+    {0, },
+};
+
 static struct net_device *e1000_dev;
 
-static struct pci_dev* probe_for_e1000(void) 
+static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-    struct pci_dev *pdev = NULL;
+    unsigned long mmio_start, mmio_end, mmio_len, mmio_flags;
+    void *ioaddr;
+    struct e1000_private *tp;
+    int i;
 
-    /* ensure we are not working on a non-PCI system */
-    if (!pci_present()) {
-        printk(KERN_INFO "E1000 ERROR: PCI not present\n");
-        return pdev;
+    tp = netdev_priv(e1000_dev); /* e1000 private information */
+    
+    /* get PCI memory mapped I/O space base address from BAR1 */
+    mmio_start = pci_resource_start(pdev, 1);
+    mmio_end = pci_resource_end(pdev, 1);
+    mmio_len = pci_resource_len(pdev, 1);
+    mmio_flags = pci_resource_flags(pdev, 1);
+
+    /* make sure above region is MMI/O */
+    if(!(mmio_flags & IORESOURCE_MEM)) {
+        printk(KERN_INFO "E1000 ERROR: region not MMI/O region\n");
+        return 0;
+    }
+    
+    /* get PCI memory space */
+    if(pci_request_regions(pdev, DRIVER_NAME)) {
+        printk(KERN_INFO "E1000 ERROR: could not get PCI region\n");
+        return 0;
     }
 
-    /* look for E1000 */
-    pdev = pci_find_device(E1000_VENDOR_ID, E1000_DEVICE_ID, NULL);
-    if (pdev) {
-        /* device found, enable it */
-        if (pci_enable_device(pdev)) {
-            printk(KERN_INFO "E1000 ERROR: could not enable devie\n");
-            return NULL;
-        }
-        else
-            printk(KERN_INFO "E1000 enabled\n");
+    pci_set_master(pdev);
+
+    /* ioremap MMI/O region */
+    ioaddr = ioremap(mmio_start, mmio_len);
+    if(!ioaddr) {
+        printk(KERN_INFO "E1000 ERROR: could not ioremap\n");
+        return 0;
     }
-    else {
-        printk(KERN_INFO "E1000 ERROR: device not found\n");
-        return pdev;
+
+    e1000_dev->base_addr = (long) ioaddr;
+    tp->mmio_addr = ioaddr;
+    tp->regs_len = mmio_len;
+
+    /* UPDATE NET_DEVICE */
+
+    for (i = 0; i < 6; i++) {  /* Hardware Address */
+        // e1000_dev->dev_addr[i] = readb(e1000_dev->base_addr+i);
+        e1000_dev->broadcast[i] = 0xff;
     }
-    return pdev;
+    e1000_dev->hard_header_len = 14;
+
+    memcpy(e1000_dev->name, DRIVER_NAME, sizeof(DRIVER_NAME)); /* Device Name */
+    e1000_dev->irq = pdev->irq;  /* Interrupt Number */
+    e1000_dev->netdev_ops = &e1000_netdev_ops;
+
+    /* register the device */
+    if (register_netdev(e1000_dev)) {
+        printk(KERN_INFO "E1000 ERROR: could not register netdevice\n");
+        return 0;
+    }
+
+    return 0;
 }
 
 static int e1000_init(struct pci_dev *pdev, struct net_device **dev_out) 
@@ -185,27 +235,22 @@ static int e1000_init(struct pci_dev *pdev, struct net_device **dev_out)
     struct net_device *dev;
     struct e1000_private *tp;
 
-    /* 
-    * alloc_etherdev allocates memory for dev and dev->priv.
-    * dev->priv shall have sizeof(struct e1000_private) memory
-    * allocated.
-    */
     dev = alloc_etherdev(sizeof(struct e1000_private));
     if(!dev) {
         printk(KERN_INFO "E1000 ERROR: could not allocate etherdev\n");
         return -1;
     }
 
-    tp = dev->priv;
+    tp = netdev_priv(dev);
     tp->pci_dev = pdev;
     *dev_out = dev;
 
     return 0;
 }
 
-static void e1000_tx_init()
+static void e1000_tx_init(struct net_device *dev)
 {
-    struct e1000_private *tp = dev->priv;
+    struct e1000_private *tp = netdev_priv(dev);
     void *ioaddr = tp->mmio_addr;
 
     // initialize tx queue
@@ -243,20 +288,19 @@ static void e1000_tx_init()
 static int e1000_open(struct net_device *dev) 
 {
     printk(KERN_INFO "e1000_open is called\n");
-    int retval;
-    struct e1000_private *tp = dev->priv;
+    struct e1000_private *tp = netdev_priv(dev);
 
     /* get memory for Tx buffers
     * memory must be DMAable
     */
-    tp->tx_buf = pci_alloc_consistent(tp->pci_dev, TOTAL_TX_BUF_SIZE, &tp->tx_bufs_dma);
+    **(tp->tx_buf) = pci_alloc_consistent(tp->pci_dev, TOTAL_TX_BUF_SIZE, &tp->tx_bufs_dma);
     
     if(!tp->tx_buf) {
         free_irq(dev->irq, dev);
         return -ENOMEM;
     }
 
-    e1000_tx_init();
+    e1000_tx_init(dev);
     netif_start_queue(dev);
     
     return 0;
@@ -272,14 +316,13 @@ static int e1000_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
     printk(KERN_INFO "e1000_start_xmit is called\n");
 
-    struct e1000_private *tp = dev->priv;
+    struct e1000_private *tp = netdev_priv(dev);
     void *ioaddr = tp->mmio_addr;
     struct tx_desc *txq = tp->txq;
-    unsigned int entry = tp->cur_tx;
     size_t len = skb->len;
 
     if (len > PKT_BUF_SIZE)
-		panic("e1000_transmit: size of packet to transmit (%d) larger than max (1518)\n", length);
+		panic("e1000_transmit: size of packet to transmit (%ld) larger than max (1518)\n", len);
 
 	size_t tail_idx = readl(ioaddr + E1000_TDT);
 
@@ -289,7 +332,7 @@ static int e1000_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		txq[tail_idx].status &= ~E1000_TXD_DD;
 		txq[tail_idx].cmd |= E1000_TXD_EOP;
 		txq[tail_idx].length = len;
-        writel((tail_idx + 1) % NTXDESC, ioaddr + E1000_TDT)
+        writel((tail_idx + 1) % NTXDESC, ioaddr + E1000_TDT);
 		return 0;
 	} else {
         netif_stop_queue(dev);
@@ -303,92 +346,30 @@ static struct net_device_stats* e1000_get_stats(struct net_device *dev)
     return 0;
 }
 
-int init_module(void) 
+static struct pci_driver e1000_driver = {
+	.name =         DRIVER_NAME,
+    .id_table =     e1000_id_table,
+	.probe =        e1000_probe,
+};
+
+int __init init_e1000_module(void) 
 {
-    struct pci_dev *pdev;
-    unsigned long mmio_start, mmio_end, mmio_len, mmio_flags;
-    void *ioaddr;
-    struct e1000_private *tp;
-    int i;
-
-    pdev = probe_for_e1000();
-    if(!pdev)
-        return 0;
-
-    if(e1000_init(pdev, &e1000_dev)) {
-        printk(KERN_INFO "E1000 ERROR: could not initialize device\n");
-        return 0;
-    }
-
-    tp = e1000_dev->priv; /* e1000 private information */
-    
-    /* get PCI memory mapped I/O space base address from BAR1 */
-    mmio_start = pci_resource_start(pdev, 1);
-    mmio_end = pci_resource_end(pdev, 1);
-    mmio_len = pci_resource_len(pdev, 1);
-    mmio_flags = pci_resource_flags(pdev, 1);
-
-    /* make sure above region is MMI/O */
-    if(!(mmio_flags & I/ORESOURCE_MEM)) {
-        printk(KERN_INFO "E1000 ERROR: region not MMI/O region\n");
-        return 0;
-    }
-    
-    /* get PCI memory space */
-    if(pci_request_regions(pdev, DRIVER_NAME)) {
-        printk(KERN_INFO "E1000 ERROR: could not get PCI region\n");
-        return 0;
-    }
-
-    pci_set_master(pdev);
-
-    /* ioremap MMI/O region */
-    ioaddr = ioremap(mmio_start, mmio_len);
-    if(!ioaddr) {
-        printk(KERN_INFO "E1000 ERROR: could not ioremap\n");
-        return 0;
-    }
-
-    e1000_dev->base_addr = (long) ioaddr;
-    tp->mmio_addr = ioaddr;
-    tp->regs_len = mmio_len;
-
-    /* UPDATE NET_DEVICE */
-
-    for (i = 0; i < 6; i++) {  /* Hardware Address */
-        e1000_dev->dev_addr[i] = readb(e1000_dev->base_addr+i);
-        e1000_dev->broadcast[i] = 0xff;
-    }
-    e1000_dev->hard_header_len = 14;
-
-    memcpy(e1000_dev->name, DRIVER_NAME, sizeof(DRIVER_NAME)); /* Device Name */
-    e1000_dev->irq = pdev->irq;  /* Interrupt Number */
-    e1000_dev->open = e1000_open;
-    e1000_dev->stop = e1000_stop;
-    e1000_dev->hard_start_xmit = e1000_start_xmit;
-    e1000_dev->get_stats = e1000_get_stats;
-
-    /* register the device */
-    if (register_netdev(e1000_dev)) {
-        printk(KERN_INFO "E1000 ERROR: could not register netdevice\n");
-        return 0;
-    }
-
-    return 0;
+    return pci_register_driver(&e1000_driver);;
 }
 
-void cleanup_module(void) 
+void __exit cleanup_e1000_module(void) 
 {
     struct e1000_private *tp;
-    tp = e1000_dev->priv;
+    tp = netdev_priv(e1000_dev);
 
     iounmap(tp->mmio_addr);
     pci_release_regions(tp->pci_dev);
 
     unregister_netdev(e1000_dev);
     pci_disable_device(tp->pci_dev);
+    pci_unregister_driver(&e1000_driver);
     return;
 }
 
-module_init(init_module);
-module_exit(cleanup_module);
+module_init(init_e1000_module);
+module_exit(cleanup_e1000_module);

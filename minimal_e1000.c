@@ -1,5 +1,4 @@
 /* Issues:
-* - e1000_init() unused -- move to e1000_probe?
 * - pci_alloc_consistent() DNE -- use dma_alloc_coherent()?
 */
 
@@ -129,6 +128,14 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
     struct e1000_private *tp;
     int i;
 
+    dev = alloc_etherdev(sizeof(struct e1000_private));
+    if(!dev) {
+        printk(KERN_INFO "E1000 ERROR: could not allocate etherdev\n");
+        return -1;
+    }
+
+    tp = netdev_priv(dev);
+    tp->pci_dev = pdev;
     tp = netdev_priv(e1000_dev); /* e1000 private information */
     
     /* get PCI memory mapped I/O space base address from BAR1 */
@@ -179,24 +186,6 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
         printk(KERN_INFO "E1000 ERROR: could not register netdevice\n");
         return 0;
     }
-
-    return 0;
-}
-
-static int e1000_init(struct pci_dev *pdev, struct net_device **dev_out) 
-{
-    struct net_device *dev;
-    struct e1000_private *tp;
-
-    dev = alloc_etherdev(sizeof(struct e1000_private));
-    if(!dev) {
-        printk(KERN_INFO "E1000 ERROR: could not allocate etherdev\n");
-        return -1;
-    }
-
-    tp = netdev_priv(dev);
-    tp->pci_dev = pdev;
-    *dev_out = dev;
 
     return 0;
 }
@@ -305,12 +294,12 @@ static struct pci_driver e1000_driver = {
 	.probe =        e1000_probe,
 };
 
-int __init init_e1000_module(void) 
+int __init e1000_init_module(void) 
 {
     return pci_register_driver(&e1000_driver);;
 }
 
-void __exit cleanup_e1000_module(void) 
+void __exit e1000_cleanup_module(void) 
 {
     struct e1000_private *tp;
     tp = netdev_priv(e1000_dev);
@@ -324,5 +313,5 @@ void __exit cleanup_e1000_module(void)
     return;
 }
 
-module_init(init_e1000_module);
-module_exit(cleanup_e1000_module);
+module_init(e1000_init_module);
+module_exit(e1000_cleanup_module);

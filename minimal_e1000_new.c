@@ -53,7 +53,7 @@ static int e1000_open(struct net_device *netdev)
     struct e1000_private *e1000_private = netdev_priv(netdev);
 
 	netif_carrier_off(netdev);
-	netif_wake_queue(netdev);
+	netif_start_queue(netdev);
 
 	return 0;
 }

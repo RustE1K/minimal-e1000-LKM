@@ -41,10 +41,12 @@ struct e1000_tx_desc {
 
 struct e1000_private
 {
-	u8 __iomem e1000_base;
+	__iomem e1000_base;
 	static struct e1000_tx_desc e1000_tx_queue[NTXDESC] __attribute__((aligned(16)));
 	static uint8_t e1000_tx_buf[NTXDESC][TX_BUF_SIZE];
 };
+
+#define E1000_REG(offset)    (*(volatile uint32_t *)(e1000_base + offset))
 
 static int e1000_open(struct net_device *netdev) 
 {
